@@ -7,6 +7,7 @@ clc
 
 % Set the path to the folder containing the audio files
 data_folder = '/Users/malinapirvu/Desktop/TuDelft/2024-2025/Q4/AP/Speech_enh_git';
+%data_folder = 'C:\workspace\matlab\tudelft\array_processing\speech_enhancement';
 
 % List of WAV files to read
 wav_files = {
@@ -43,60 +44,146 @@ else
     error('Impulse response file not found: %s', impulse_path);
 end
 
+%% Import all the sound signals
+num_mics = 4; % multimicrohopne system with 4 mics
+
+% For filtering get all impulse responses: h_inter1, h_inter2, h_inter3, h_inter4, h_target
+h_inter1 = impulse_data.h_inter1;
+h_inter2 = impulse_data.h_inter2;
+h_inter3 = impulse_data.h_inter3;
+h_inter4 = impulse_data.h_inter4;
+h_target = impulse_data.h_target;
+
+% Import the all the sound signals
+s1 = audio_data.clean_speech_wav.signal;
+s2 = audio_data.clean_speech_2_wav.signal;
+noise_babble = audio_data.babble_noise_wav.signal;
+noise_artificial = audio_data.aritificial_nonstat_noise_wav.signal;
+noise_speech_shaped = audio_data.Speech_shaped_noise_wav.signal;
+
+%% Filtering
+% Select s1 as a target source signal (s2 and 3 noises are interferers + noise)
+% Filter all the sound signals using the 5 impulse response sets
+filter_length = size(h_target, 2); % all the impulse responses has same length
+
+filtered_s1 = zeros(length(s1)+ filter_length - 1, num_mics);
+filtered_s2 = zeros(length(s2)+ filter_length - 1, num_mics);
+filtered_noise_babble = zeros(length(noise_babble)+ filter_length - 1, num_mics);
+filtered_noise_artificial = zeros(length(noise_artificial)+ filter_length - 1, num_mics);
+filtered_noise_speech_shaped = zeros(length(noise_speech_shaped)+ filter_length - 1, num_mics);
+
+% Convolve all sound signal with corresponding impulse response
+for m = 1:num_mics
+    filtered_s1(:, m) = conv(s1, h_target(m, :));
+    filtered_s2(:, m) = conv(s2, h_inter1(m, :));
+    filtered_noise_babble(:, m) = conv(noise_babble, h_inter2(m, :));
+    filtered_noise_artificial(:, m) = conv(noise_artificial, h_inter3(m, :));
+    filtered_noise_speech_shaped(:, m) = conv(noise_speech_shaped, h_inter4(m, :));
+end
 
 %% STFT signals
 
-% select window from: h_inter1, h_inter2, h_inter3, h_inter4, h_target
-window = impulse_data.h_inter1;
-window_length = size(window,2);
-window_overlap = 0.5;
+% Window parameters
+window_length = 0.02 *  Fs; % 20 ms frame length
+window_overlap = 0.5; % 50% overlap
 hop_size = window_length*(1-window_overlap);
 
-% Import the source signals
-s1 = audio_data.clean_speech_wav.signal;
-s2 = audio_data.clean_speech_2_wav.signal;
-
-% Perform convolution with a window ->FFT
+% Perform convolution with a window ->FFT for clean signals
 % sizes of res_1 and res_2 are half of the window_length 
-res_1 = STFT_2(s1,window_length,window_overlap,hop_size,window);
-res_2 = STFT_2(s2,window_length,window_overlap,hop_size,window);
+
+res_s1 = STFT_2(filtered_s1, window_length, hop_size, num_mics); 
+res_s2 = STFT_2(filtered_s2, window_length, hop_size, num_mics); 
 
 % Perform convolution with a window ->FFT for noise
-noise = audio_data.babble_noise_wav.signal;
-noise_STFT = STFT_2(noise,window_length,window_overlap,hop_size,window);
+res_noise_babble = STFT_2(filtered_noise_babble, window_length, hop_size, num_mics); 
+res_noise_artificial = STFT_2(filtered_noise_artificial, window_length, hop_size, num_mics);
+res_noise_speech_shaped = STFT_2(filtered_noise_speech_shaped, window_length, hop_size, num_mics);
 
 %% Padding to match dimensions 
-% Get time dimensions
-T_noise = size(noise_STFT, 2);
-T_res1 = size(res_1, 2);
-T_res2 = size(res_2, 2);
+%% Padding to match dimensions 
 
-% Determine max time dimension
-T_max = max([T_noise, T_res1, T_res2]);
+% Get num windows
+num_windows_res1 = size(res_s1, 2);
+num_windows_res2 = size(res_s2, 2);
+num_windows_noise_babble = size(res_noise_babble, 2);
+num_windows_noise_artificial = size(res_noise_artificial, 2);
+num_windows_noise_speech_shaped = size(res_noise_speech_shaped, 2);
 
-% Pad each STFT matrix along time dimension (2nd dim)
+% Determine max num windows 
+num_windows_padded = max([num_windows_res1, num_windows_res2, ...
+    num_windows_noise_babble, num_windows_noise_artificial, ...
+    num_windows_noise_speech_shaped]);
+
+% Determine max num samples (padded)
+num_samples_max = max([length(filtered_s1), length(filtered_s2), ...
+    length(filtered_noise_babble), length(filtered_noise_artificial), ...
+    length(filtered_noise_speech_shaped)]);
+
+% Pad each STFT matrix along num windows (2nd dim)
 % Padding with zeros at the end
 
-noise_STFT_padded = padarray(noise_STFT, [0, T_max - T_noise, 0], 0, 'post');
-res_1_padded      = padarray(res_1,      [0, T_max - T_res1,  0], 0, 'post');
-res_2_padded      = padarray(res_2,      [0, T_max - T_res2,  0], 0, 'post');
+res_s1_padded      = padarray(res_s1,      [0, num_windows_padded - num_windows_res1,  0], 0, 'post');
+res_s2_padded      = padarray(res_s2,      [0, num_windows_padded - num_windows_res2,  0], 0, 'post');
+res_noise_babble_padded = padarray(res_noise_babble, [0, num_windows_padded - num_windows_noise_babble, 0], 0, 'post');
+res_noise_artificial_padded = padarray(res_noise_artificial, [0, num_windows_padded - num_windows_noise_artificial, 0], 0, 'post');
+res_noise_speech_shaped_padded = padarray(res_noise_speech_shaped, [0, num_windows_padded - num_windows_noise_speech_shaped, 0], 0, 'post');
 
-
-X = res_1_padded + res_2_padded + noise_STFT_padded;
+% Received signal
+X = res_s1_padded + res_s2_padded + res_noise_babble_padded + ...
+    res_noise_artificial_padded + res_noise_speech_shaped_padded;
 
 
 %% Compute noise covariance
-num_noise_windows = floor((T_max - window_length) / hop_size) + 1;
-num_mics = size(window,1);
+num_noise_windows = floor((num_samples_max - window_length) / hop_size) + 1;
+num_freq_bins = size(X, 1);
 
-R_n = zeros(num_mics, num_mics, size(noise_STFT_padded, 1));  % Frequency-bin specific covariance
+R_n = zeros(num_mics, num_mics, num_freq_bins);  % Frequency-bin specific covariance
 
-for k = 1:size(noise_STFT_padded, 1)  % Loop over frequency bins
-    for l = 1:num_noise_windows
-        noise_vec = squeeze(noise_STFT_padded(k, l, :));  % Noise vector for freq-bin k, frame l
-        R_n(:, :, k) = R_n(:, :, k) + (noise_vec * noise_vec') / num_noise_windows;
-    end
+for k = 1:num_freq_bins  % Loop over frequency bins
+
+    % Get interference (s2) and noise matrices
+    s2_k = transpose(squeeze(res_s2_padded(k, :, :))); % Interference matrix for freq-bin k
+    noise_babble_k = transpose(squeeze(res_noise_babble_padded(k, :, :)));  % Noise matrix for freq-bin k
+    noise_artificial_k = transpose(squeeze(res_noise_artificial_padded(k, :, :))); 
+    noise_speech_shaped_k = transpose(squeeze(res_noise_speech_shaped_padded(k, :, :))); 
+
+    % Compute the individual covariances
+    R_n_s2 = (s2_k * s2_k') / num_noise_windows;
+    R_n_babble = (noise_babble_k * noise_babble_k') / num_noise_windows;
+    R_n_artificial = (noise_artificial_k * noise_artificial_k') / num_noise_windows;
+    R_n_speech_shaped = (noise_speech_shaped_k * noise_speech_shaped_k') / num_noise_windows;
+
+    % Sum all the individual covariances
+    R_n(:, :, k) = R_n(:, :, k) + (R_n_s2 + R_n_babble + R_n_artificial + R_n_speech_shaped) ;
 end
+
+%% Calculate acoustic transfer function and apply MVDR beamformer
+
+% Calculate acoustic transfer function
+A = calculate_ATF(X, R_n, num_mics, num_freq_bins);
+
+res_hat = MVDR_beamformer(X, R_n, A, num_freq_bins, num_windows_padded);
+
+%% Reconstruct time-domain signal
+S_recon = zeros(num_samples_max,1);
+
+% Does not need to divide by magnitude of the window cause its 1
+%frame_weight_sum = zeros(num_samples, 1);  % Sum of Hann windows for overlap-add
+
+for l = 1:num_windows_padded
+    start_idx = (l - 1) * hop_size + 1;
+    end_idx = start_idx + window_length-1 - 1;
+    % For MVDR
+    window_ifft = real(ifft([res_hat(:, l); conj(flip(res_hat(2:end, l), 1))]));  % IFFT to time-domain
+    S_recon(start_idx:end_idx) = S_recon(start_idx:end_idx) + window_ifft; %does not need to divide by magnitude of the window cause its 1
+    %frame_weight_sum(start_idx:end_idx) = frame_weight_sum(start_idx:end_idx) + hann_window;
+end
+% Normalize by window sum
+%S_recon = S_recon ./ frame_weight_sum;
+
+% Save the result
+%audiowrite('clean_signal_MVDR.wav', S_recon, Fs);
+
 
 
 
