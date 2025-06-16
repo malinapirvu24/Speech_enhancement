@@ -1,7 +1,7 @@
-function A = calculate_ATF(X, R_n, num_mics, num_freq_bins)
+function R_s_hat = estimate_R_s(X, R_n, num_mics, num_freq_bins)
 %single target source model
 
-A = zeros(num_freq_bins, num_mics);
+R_s_hat = zeros(num_mics, num_mics, num_freq_bins);
 
 for k = 1:num_freq_bins
     % Get noise covariance and data matrix X corresponding to particular freq. k
@@ -12,7 +12,7 @@ for k = 1:num_freq_bins
     
     % If different noises are added to each microphone
     R_n_inv_half = V * diag(1./sqrt(diag(D))) * V'; %R_n^-1/2
-    R_n_half = V .* diag(sqrt(diag(D))) * V; %R_n^1/2
+    R_n_half = V .* sqrt(D) * V; %R_n^1/2
 
     % Pre-whiten data
     X_whiten = R_n_inv_half * transpose(X_k); % size (num_mics) x n
@@ -20,10 +20,13 @@ for k = 1:num_freq_bins
     R_x_whiten = (X_whiten * X_whiten') / size(X_whiten, 2);
     % Apply EVD
     [U, D] = eig(R_x_whiten);
-    [~, idx] = sort(diag(D), 'descend');
+    [eigvals_sorted, idx] = sort(diag(D), 'descend');
     
     U_modified = U(:, idx(1));
-   
-    % Compute acoustic transfer function for single target
-    A(k, :) = R_n_half * U_modified;
+    
+    % Estimate R_s
+    lambda = eigvals_sorted(1);
+    R_s_whiten_hat = lambda * (U_modified * U_modified'); 
+    R_s_hat(:, :, k) = real(R_n_half * R_s_whiten_hat * R_n_half);
+
 end

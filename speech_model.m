@@ -164,8 +164,18 @@ A = calculate_ATF(X, R_n, num_mics, num_freq_bins);
 
 res_hat = MVDR_beamformer(X, R_n, A, num_freq_bins, num_windows_padded);
 
+%% Get estimated R_s and choose the reference microphone based on the average clean signal power across frequency bins 
+R_s_hat = estimate_R_s(X, R_n, num_mics, num_freq_bins);
+
+% Multi-channel Wiener beamformer
+res_hat_Wiener = Wiener_beamformer(X, R_n, A, R_s_hat, num_freq_bins, num_windows_padded);
+
+% Delay and sum beamformer
+res_hat_DS = Delay_Sum_beamformer(X, A, num_freq_bins, num_windows_padded);
 %% Reconstruct time-domain signal
 S_recon = zeros(num_samples_max,1);
+S_recon_Wiener = zeros(num_samples_max,1);
+S_recon_DS = zeros(num_samples_max,1);
 
 % Does not need to divide by magnitude of the window cause its 1
 %frame_weight_sum = zeros(num_samples, 1);  % Sum of Hann windows for overlap-add
@@ -176,6 +186,12 @@ for l = 1:num_windows_padded
     % For MVDR
     window_ifft = real(ifft([res_hat(:, l); conj(flip(res_hat(2:end, l), 1))]));  % IFFT to time-domain
     S_recon(start_idx:end_idx) = S_recon(start_idx:end_idx) + window_ifft; %does not need to divide by magnitude of the window cause its 1
+    % For Wiener
+    window_ifft_Wiener = real(ifft([res_hat_Wiener(:, l); conj(flip(res_hat_Wiener(2:end, l), 1))]));  % IFFT to time-domain
+    S_recon_Wiener(start_idx:end_idx) = S_recon_MVDR(start_idx:end_idx) + window_ifft_Wiener; %does not need to divide by magnitude of the window cause its 1
+    % For Delay and Sum
+    window_ifft_DS = real(ifft([res_hat_DS(:, l); conj(flip(res_hat_DS(2:end, l), 1))]));  % IFFT to time-domain
+    S_recon_DS(start_idx:end_idx) = S_recon_DS(start_idx:end_idx) + window_ifft_DS; %does not need to divide by magnitude of the window cause its 1
     %frame_weight_sum(start_idx:end_idx) = frame_weight_sum(start_idx:end_idx) + hann_window;
 end
 % Normalize by window sum
@@ -184,7 +200,39 @@ end
 % Save the result
 %audiowrite('clean_signal_MVDR.wav', S_recon, Fs);
 
+%% Compute target source covariance
+num_source_windows = floor((num_samples_max - window_length) / hop_size) + 1;
+num_freq_bins = size(X, 1);
 
+R_s1 = zeros(num_mics, num_mics, num_freq_bins);  % Frequency-bin specific covariance
+
+for k = 1:num_freq_bins  % Loop over frequency bins
+    % Get target source (s1) 
+    s1_k = transpose(squeeze(res_s1_padded(k, :, :))); % Interference matrix for freq-bin k
+    % Compute the covariance
+    R_s1(:, :, k) = real((s1_k * s1_k') / num_source_windows);
+end
+% Target source power
+mean(abs(s1(:)).^2)
+%% Beamformers performance evaluation using SNR_out
+
+[SNR_MVDR, SNR_Wiener, SNR_DS] = SNR_out(R_n, A, R_s1, num_freq_bins);
+
+mean_SNR_MVDR = mean(SNR_MVDR);
+mean_SNR_Wiener = mean(SNR_Wiener);
+mean_SNR_DS = mean(SNR_DS);
+
+fprintf('Mean SNR (MVDR): %.2f dB\n', 10*log10(mean_SNR_MVDR));
+fprintf('Mean SNR (Wiener): %.2f dB\n', 10*log10(mean_SNR_Wiener));
+fprintf('Mean SNR (DS): %.2f dB\n', 10*log10(mean_SNR_DS));
+
+%% Beamformers performance evaluation using MSE
+
+[MSE_MVDR, MSE_Wiener, MSE_DS] = calculate_MSE(R_n, A, R_s1, num_freq_bins, num_mics);
+
+fprintf('Mean MSE (MVDR): %.2f \n', mean(MSE_MVDR));
+fprintf('Mean MSE (Wiener): %.2f \n', mean(MSE_Wiener));
+fprintf('Mean MSE (DS): %.2f \n', mean(MSE_DS));
 
 
 
