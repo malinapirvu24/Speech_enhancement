@@ -12,7 +12,7 @@ for k = 1:num_freq_bins
     
     % If different noises are added to each microphone
     R_n_inv_half = V * diag(1./sqrt(diag(D))) * V'; %R_n^-1/2
-    R_n_half = V .* diag(sqrt(diag(D))) * V; %R_n^1/2
+    R_n_half = V * diag(sqrt(diag(D))) * V; %R_n^1/2
 
     % Pre-whiten data
     X_whiten = R_n_inv_half * transpose(X_k); % size (num_mics) x n
